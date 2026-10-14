@@ -1,0 +1,7 @@
+supabase==2.31.0
+requests==2.31.0
+python-dotenv==1.0.0
+numpy==1.26.4
+plyfile==1.0.3
+Pillow==10.3.0
+modal>=0.64.0

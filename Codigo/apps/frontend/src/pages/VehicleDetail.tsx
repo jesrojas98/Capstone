@@ -1,0 +1,273 @@
+import { useEffect, useRef, useState } from 'react'
+import { useParams, Link, useNavigate } from 'react-router-dom'
+import { formatPriceNumber } from '@/utils/formatters'
+import { vehiclesService, type Vehicle } from '@/services/vehicles.service'
+import { favoritesService } from '@/services/favorites.service'
+import { api } from '@/lib/api'
+import { useAuthStore } from '@/store/auth.store'
+
+const TRANSMISSION_LABEL: Record<string, string> = { manual: 'Manual', automatic: 'Automático', cvt: 'CVT' }
+const FUEL_LABEL: Record<string, string> = { gasoline: 'Bencina', diesel: 'Diésel', electric: 'Eléctrico', hybrid: 'Híbrido' }
+
+export function VehicleDetail() {
+  const { id } = useParams<{ id: string }>()
+  const { user } = useAuthStore()
+  const navigate = useNavigate()
+
+  const [vehicle, setVehicle] = useState<Vehicle | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [activeImg, setActiveImg] = useState(0)
+  const thumbStripRef = useRef<HTMLDivElement>(null)
+  const [saved, setSaved] = useState(false)
+  const [savingFav, setSavingFav] = useState(false)
+  const [message, setMessage] = useState('')
+  const [sendingMsg, setSendingMsg] = useState(false)
+  const [msgSent, setMsgSent] = useState(false)
+
+  useEffect(() => {
+    if (!id) return
+    vehiclesService.getOne(id)
+      .then((v) => { setVehicle(v); setLoading(false) })
+      .catch(() => setLoading(false))
+    if (user) favoritesService.isSaved(id).then((r) => setSaved(r.saved))
+  }, [id, user])
+
+  useEffect(() => {
+    const strip = thumbStripRef.current
+    if (!strip) return
+    const thumb = strip.children[activeImg] as HTMLElement | undefined
+    if (!thumb) return
+    thumb.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+  }, [activeImg])
+
+  async function toggleFavorite() {
+    if (!user) { navigate('/login'); return }
+    setSavingFav(true)
+    const res = await favoritesService.toggle(id!)
+    setSaved(res.saved)
+    setSavingFav(false)
+  }
+
+  async function sendMessage(e: React.FormEvent) {
+    e.preventDefault()
+    if (!user) { navigate('/login'); return }
+    if (!message.trim()) return
+    setSendingMsg(true)
+    await api.post('/messages', { receiver_id: vehicle!.seller_id, vehicle_id: id, content: message })
+    setMsgSent(true)
+    setSendingMsg(false)
+  }
+
+  if (loading) return (
+    <div className="flex items-center justify-center min-h-[60vh]">
+      <span className="material-symbols-outlined text-[var(--color-primary)] animate-spin" style={{ fontSize: 40 }}>progress_activity</span>
+    </div>
+  )
+
+  if (!vehicle) return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] px-[var(--spacing-gutter)] text-center">
+      <p className="label-caps text-[var(--color-primary)] mb-4">404</p>
+      <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 700 }} className="mb-6">Vehículo no encontrado</h1>
+      <Link to="/catalog" className="glow-primary px-8 py-3 bg-[var(--color-primary-container)] text-[var(--color-on-primary-container)] label-caps font-bold rounded-lg hover:bg-[var(--color-primary)] transition-all">
+        VER CATÁLOGO
+      </Link>
+    </div>
+  )
+
+  const allImages = vehicle.vehicle_images?.sort((a, b) => a.sort_order - b.sort_order) ?? []
+  const images = allImages.filter((i) => i.image_type !== 'reconstruction').length > 0
+    ? allImages.filter((i) => i.image_type !== 'reconstruction')
+    : allImages
+
+  const specs = [
+    vehicle.transmission && { label: 'TRANSMISIÓN', value: TRANSMISSION_LABEL[vehicle.transmission] ?? vehicle.transmission, icon: 'settings' },
+    vehicle.fuel_type && { label: 'COMBUSTIBLE', value: FUEL_LABEL[vehicle.fuel_type] ?? vehicle.fuel_type, icon: 'oil_barrel' },
+    vehicle.body_type && { label: 'CARROCERÍA', value: vehicle.body_type, icon: 'directions_car' },
+    vehicle.color && { label: 'COLOR', value: vehicle.color, icon: 'palette' },
+    vehicle.doors && { label: 'PUERTAS', value: String(vehicle.doors), icon: 'sensor_door' },
+    { label: 'KILOMETRAJE', value: `${vehicle.mileage.toLocaleString('es-CL')} km`, icon: 'speed' },
+  ].filter(Boolean) as { label: string; value: string; icon: string }[]
+
+  return (
+    <div className="px-[var(--spacing-gutter)] py-10 max-w-[var(--spacing-max-width)] mx-auto">
+      <nav className="flex items-center gap-2 label-caps text-[var(--color-on-surface-variant)] text-xs mb-8">
+        <Link to="/" className="hover:text-[var(--color-primary)] transition-colors">INICIO</Link>
+        <span>/</span>
+        <Link to="/catalog" className="hover:text-[var(--color-primary)] transition-colors">CATÁLOGO</Link>
+        <span>/</span>
+        <span className="text-[var(--color-on-surface)]">{vehicle.brand} {vehicle.model}</span>
+      </nav>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+
+        {/* Galería */}
+        <div className="flex flex-col gap-4">
+          <div className="aspect-[16/10] rounded-xl overflow-hidden relative bg-[var(--color-surface-container-high)] group/gallery">
+            {images[activeImg] ? (
+              <img src={images[activeImg].image_url} alt={`${vehicle.brand} ${vehicle.model}`} className="w-full h-full object-cover transition-opacity duration-300" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                <span className="material-symbols-outlined text-[var(--color-outline)]" style={{ fontSize: 64 }}>directions_car</span>
+              </div>
+            )}
+            {vehicle.has_3d_model && (
+              <div className="absolute top-4 left-4 flex items-center gap-2 glass-card px-3 py-2 rounded-lg z-10">
+                <span className="material-symbols-outlined text-[var(--color-primary)] text-base">view_in_ar</span>
+                <span className="label-caps text-[var(--color-primary)] text-[10px]">VISTA 3D DISPONIBLE</span>
+              </div>
+            )}
+            {images.length > 1 && (
+              <>
+                <button
+                  onClick={() => setActiveImg((i) => (i - 1 + images.length) % images.length)}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 z-10 opacity-0 -translate-x-3 group-hover/gallery:opacity-100 group-hover/gallery:translate-x-0 transition-all duration-250 w-10 h-10 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-white flex items-center justify-center hover:bg-[var(--color-primary-container)] hover:border-[var(--color-primary)]/40 hover:scale-110 active:scale-95">
+                  <span className="material-symbols-outlined" style={{ fontSize: 22 }}>chevron_left</span>
+                </button>
+                <button
+                  onClick={() => setActiveImg((i) => (i + 1) % images.length)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 z-10 opacity-0 translate-x-3 group-hover/gallery:opacity-100 group-hover/gallery:translate-x-0 transition-all duration-250 w-10 h-10 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-white flex items-center justify-center hover:bg-[var(--color-primary-container)] hover:border-[var(--color-primary)]/40 hover:scale-110 active:scale-95">
+                  <span className="material-symbols-outlined" style={{ fontSize: 22 }}>chevron_right</span>
+                </button>
+                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex gap-1.5 opacity-0 group-hover/gallery:opacity-100 transition-opacity duration-250">
+                  {images.map((_, i) => (
+                    <button key={i} onClick={() => setActiveImg(i)}
+                      className={`h-1.5 rounded-full transition-all duration-300 ${i === activeImg ? 'w-5 bg-[var(--color-primary)]' : 'w-1.5 bg-white/40 hover:bg-white/70'}`}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          {images.length > 1 && (
+            <div
+              ref={thumbStripRef}
+              className="flex gap-2 overflow-x-auto py-2 px-2"
+              style={{
+                scrollbarWidth: 'thin',
+                scrollbarColor: 'var(--color-outline-variant) transparent',
+              }}
+            >
+              {images.map((img, i) => (
+                <button
+                  key={img.id}
+                  onClick={() => setActiveImg(i)}
+                  className={`relative flex-shrink-0 w-20 aspect-[4/3] rounded-lg overflow-hidden transition-all duration-200 outline-none
+                    ${i === activeImg
+                      ? 'ring-2 ring-[var(--color-primary)] ring-offset-2 ring-offset-[var(--color-background)] scale-105 shadow-lg'
+                      : 'opacity-50 hover:opacity-80 hover:scale-105'
+                    }`}
+                >
+                  <img src={img.thumbnail_url ?? img.image_url} alt="" className="w-full h-full object-cover" />
+                </button>
+              ))}
+            </div>
+          )}
+
+          {vehicle.has_3d_model && (() => {
+            const model = vehicle.vehicle_3d_models?.[0]
+            const modelUrl = model?.status === 'completed' ? model.model_url : null
+            return (
+              <div className="glass-card rounded-xl overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-outline-variant)]/30">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-[var(--color-primary)] animate-pulse" />
+                    <span className="label-caps text-[var(--color-primary)] text-[10px]">VISTA 3D EN VIVO</span>
+                  </div>
+                  <span className="mono-spec text-[var(--color-on-surface-variant)] text-xs">Gaussian Splatting</span>
+                </div>
+                {modelUrl ? (
+                  <iframe
+                    src={`/splat-viewer.html?url=${encodeURIComponent(modelUrl)}`}
+                    className="w-full border-0"
+                    style={{ height: 360 }}
+                    title="Visor 3D Gaussian Splatting"
+                    allow="cross-origin-isolated"
+                  />
+                ) : (
+                  <div className="h-40 flex flex-col items-center justify-center gap-3 bg-[var(--color-surface-container-lowest)]">
+                    <span className="material-symbols-outlined text-[var(--color-outline)]" style={{ fontSize: 40, fontVariationSettings: "'FILL' 1" }}>hourglass_empty</span>
+                    <p className="label-caps text-[var(--color-on-surface-variant)] text-xs">Modelo 3D en procesamiento…</p>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+        </div>
+
+        {/* Info */}
+        <div className="flex flex-col gap-6">
+          <div>
+            <p className="label-caps text-[var(--color-on-surface-variant)] mb-1">{vehicle.year} · {vehicle.brand}</p>
+            <h1 style={{ fontFamily: 'var(--font-headline)', fontSize: 36, fontWeight: 700, lineHeight: 1.2 }} className="mb-3">{vehicle.model}</h1>
+            <p className="flex items-baseline gap-2">
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 700 }} className="text-[var(--color-on-surface)]">
+                {formatPriceNumber(vehicle.price)}
+              </span>
+              <span className="label-caps text-[var(--color-on-surface-variant)] text-xs">CLP</span>
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 text-[var(--color-on-surface-variant)]">
+            <span className="material-symbols-outlined text-base">location_on</span>
+            <span className="text-sm">{vehicle.location}{vehicle.region ? `, ${vehicle.region}` : ''}</span>
+          </div>
+
+          {/* Contactar vendedor */}
+          {vehicle.seller_id !== user?.id && (
+            <div className="glass-card rounded-xl p-5">
+              <h3 className="label-caps text-[var(--color-on-surface-variant)] mb-3">CONTACTAR AL VENDEDOR</h3>
+              {msgSent ? (
+                <div className="flex items-center gap-2 text-[var(--color-primary)]">
+                  <span className="material-symbols-outlined text-base">check_circle</span>
+                  <p className="text-sm">¡Mensaje enviado! El vendedor te responderá pronto.</p>
+                </div>
+              ) : (
+                <form onSubmit={sendMessage} className="flex flex-col gap-3">
+                  <textarea value={message} onChange={(e) => setMessage(e.target.value)}
+                    placeholder="Hola, me interesa este vehículo..." rows={3} required
+                    className="w-full bg-[var(--color-surface-container)] border border-[var(--color-outline-variant)]/30 rounded-lg px-3 py-2 text-sm text-[var(--color-on-surface)] outline-none focus:border-[var(--color-primary)]/50 placeholder:text-[var(--color-outline)] resize-none" />
+                  <button type="submit" disabled={sendingMsg}
+                    className="glow-primary w-full py-3 bg-[var(--color-primary-container)] text-[var(--color-on-primary-container)] label-caps font-bold rounded-lg hover:bg-[var(--color-primary)] transition-all flex items-center justify-center gap-2 disabled:opacity-60">
+                    <span className="material-symbols-outlined text-base">{sendingMsg ? 'progress_activity' : 'send'}</span>
+                    {sendingMsg ? 'ENVIANDO...' : 'ENVIAR MENSAJE'}
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
+
+          <button onClick={toggleFavorite} disabled={savingFav}
+            className="w-full py-3 border border-[var(--color-outline-variant)]/50 text-[var(--color-on-surface)] label-caps rounded-lg hover:bg-[var(--color-surface-container)] transition-all flex items-center justify-center gap-2 disabled:opacity-60">
+            <span className="material-symbols-outlined text-base" style={{ fontVariationSettings: saved ? "'FILL' 1" : "'FILL' 0" }}>favorite</span>
+            {saved ? 'GUARDADO EN FAVORITOS' : 'GUARDAR EN FAVORITOS'}
+          </button>
+
+          {specs.length > 0 && (
+            <div className="glass-card rounded-xl p-6">
+              <h3 className="label-caps text-[var(--color-on-surface-variant)] mb-4">ESPECIFICACIONES</h3>
+              <div className="grid grid-cols-2 gap-4">
+                {specs.map(({ label, value, icon }) => (
+                  <div key={label} className="flex items-start gap-3">
+                    <span className="material-symbols-outlined text-[var(--color-primary)] text-base mt-0.5">{icon}</span>
+                    <div>
+                      <p className="label-caps text-[var(--color-on-surface-variant)] text-[10px]">{label}</p>
+                      <p className="mono-spec text-[var(--color-on-surface)] text-sm">{value}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {vehicle.description && (
+            <div className="glass-card rounded-xl p-6">
+              <h3 className="label-caps text-[var(--color-on-surface-variant)] mb-3">DESCRIPCIÓN</h3>
+              <p className="text-[var(--color-on-surface-variant)] text-sm leading-relaxed">{vehicle.description}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
